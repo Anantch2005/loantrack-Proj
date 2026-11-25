@@ -1,0 +1,160 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LoanTrack</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { margin-bottom: 0; }
+  .meta { color: #666; font-size: .85rem; margin: .25rem 0 1.5rem; }
+  form { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: .5rem; margin-bottom: 1rem; }
+  input, select, button { padding: .5rem; font-size: .95rem; }
+  button { cursor: pointer; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; }
+  th { background: #f5f5f5; }
+  #msg { min-height: 1.4rem; font-size: .9rem; }
+  .err { color: #b00020; }
+  .ok { color: #1b7f3b; }
+
+  @media (max-width: 700px) {
+    form { grid-template-columns: 1fr 1fr; }
+    table { font-size: .8rem; }
+    th, td { padding: .35rem; }
+  }
+</style>
+</head>
+<body>
+<h1>LoanTrack</h1>
+
+<div class="meta">
+  Last response served by: <strong id="pod">-</strong>
+  · API: <span id="ready">checking…</span>
+</div>
+
+<form id="loan-form">
+  <input name="borrower_name" placeholder="Borrower name" required>
+  <input name="loan_amount" type="number" step="0.01" min="0.01" placeholder="Amount" required>
+  <input name="property_city" placeholder="City">
+  <select name="status">
+    <option>PENDING</option>
+    <option>APPROVED</option>
+    <option>REJECTED</option>
+    <option>DISBURSED</option>
+  </select>
+  <button type="submit">Add loan</button>
+</form>
+
+<div id="msg"></div>
+
+<table>
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Borrower</th>
+      <th>Amount</th>
+      <th>City</th>
+      <th>Status</th>
+      <th>Created</th>
+    </tr>
+  </thead>
+  <tbody id="rows"></tbody>
+</table>
+
+<script>
+const API = "/api";
+const $ = (id) => document.getElementById(id);
+
+function setMsg(text, cls) {
+  const m = $("msg");
+  m.textContent = text;
+  m.className = cls || "";
+}
+
+async function responseData(res) {
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || res.statusText);
+  }
+  return data;
+}
+
+async function loadLoans() {
+  try {
+    const res = await fetch(`${API}/loans`);
+    const data = await responseData(res);
+
+    $("pod").textContent = data.served_by || "-";
+
+    const tbody = $("rows");
+    tbody.replaceChildren();
+
+    for (const l of data.loans) {
+      const tr = document.createElement("tr");
+
+      [
+        l.id,
+        l.borrower_name,
+        Number(l.loan_amount).toLocaleString("en-IN"),
+        l.property_city || "-",
+        l.status,
+        new Date(l.created_at).toLocaleString()
+      ].forEach(v => {
+        const td = document.createElement("td");
+        td.textContent = v;
+        tr.appendChild(td);
+      });
+
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    setMsg("Could not load loans: " + e.message, "err");
+  }
+}
+
+async function checkReady() {
+  try {
+    const res = await fetch(`${API}/readyz`);
+    $("ready").textContent = res.ok ? "ready" : "database down";
+  } catch {
+    $("ready").textContent = "unreachable";
+  }
+}
+
+$("loan-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+
+  const body = Object.fromEntries(new FormData(ev.target));
+
+  body.loan_amount = Number(body.loan_amount);
+
+  try {
+    const res = await fetch(`${API}/loans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+
+    const data = await responseData(res);
+
+    setMsg(
+      `Added loan #${data.loan.id} (served by ${data.served_by})`,
+      "ok"
+    );
+
+    ev.target.reset();
+    await loadLoans();
+  } catch (e) {
+    setMsg("Add failed: " + e.message, "err");
+  }
+});
+
+loadLoans();
+checkReady();
+
+setInterval(checkReady, 5000);
+</script>
+</body>
+</html>
