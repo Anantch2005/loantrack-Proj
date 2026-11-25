@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: backend
   namespace: loantrack
+  labels:
+    app: backend
 spec:
   type: ClusterIP
   selector:
@@ -18,9 +20,10 @@ kind: Deployment
 metadata:
   name: backend
   namespace: loantrack
+  labels:
+    app: backend
 spec:
   replicas: 1
-
   selector:
     matchLabels:
       app: backend
@@ -29,14 +32,15 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      maxUnavailable: 0
+      maxUnavailable: 0          # zero-downtime
 
   template:
     metadata:
       labels:
         app: backend
-
     spec:
+      terminationGracePeriodSeconds: 30
+
       containers:
         - name: backend
           image: loantrack-backend:v1
@@ -56,6 +60,11 @@ spec:
                 secretKeyRef:
                   name: db-credentials
                   key: DB_PASSWORD
+            # Optional: expose pod name for scaling demo later
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
 
           resources:
             requests:
@@ -76,8 +85,10 @@ spec:
             httpGet:
               path: /healthz
               port: 8000
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
 
           readinessProbe:
             httpGet:
@@ -86,5 +97,4 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
-
-      terminationGracePeriodSeconds: 30
+            failureThreshold: 3
