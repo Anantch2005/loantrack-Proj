@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: db
   namespace: loantrack
+  labels:
+    app: db
 spec:
   type: ClusterIP
   selector:
@@ -18,6 +20,8 @@ kind: Service
 metadata:
   name: db-headless
   namespace: loantrack
+  labels:
+    app: db
 spec:
   clusterIP: None
   selector:
@@ -33,6 +37,8 @@ kind: StatefulSet
 metadata:
   name: db
   namespace: loantrack
+  labels:
+    app: db
 spec:
   serviceName: db-headless
   replicas: 1
@@ -46,7 +52,7 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 70
+        runAsUser: 70          # postgres user in alpine/official image
         runAsGroup: 70
         fsGroup: 70
 
@@ -69,7 +75,6 @@ spec:
                 secretKeyRef:
                   name: db-credentials
                   key: POSTGRES_PASSWORD
-
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
 
@@ -87,38 +92,30 @@ spec:
 
           startupProbe:
             exec:
-              command:
-                - sh
-                - -c
-                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
             periodSeconds: 5
             failureThreshold: 30
 
           readinessProbe:
             exec:
-              command:
-                - sh
-                - -c
-                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
             periodSeconds: 5
             timeoutSeconds: 3
+            failureThreshold: 3
 
           livenessProbe:
             exec:
-              command:
-                - sh
-                - -c
-                - pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB"
-            initialDelaySeconds: 20
+              command: ["sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 3
+            failureThreshold: 3
 
   volumeClaimTemplates:
     - metadata:
         name: postgres-storage
       spec:
-        accessModes:
-          - ReadWriteOnce
+        accessModes: ["ReadWriteOnce"]
         resources:
           requests:
             storage: 2Gi
