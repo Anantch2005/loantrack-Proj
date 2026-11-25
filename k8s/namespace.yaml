@@ -4,3 +4,4 @@ metadata:
   name: loantrack
   labels:
     app.kubernetes.io/name: loantrack
+    app.kubernetes.io/part-of: loantrack
