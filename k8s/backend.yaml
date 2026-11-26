@@ -60,11 +60,6 @@ spec:
                 secretKeyRef:
                   name: db-credentials
                   key: DB_PASSWORD
-            # Optional: expose pod name for scaling demo later
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
 
           resources:
             requests:
