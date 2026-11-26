@@ -1,31 +1,30 @@
 # Branching Strategy
 
-## Model
+## Workflow Followed
 
-This project follows a simplified GitFlow workflow.
-- main: Always deployable release branch.
-- develop: Integration branch for completed features.
-- feature/*: Isolated development branches.
+I followed a feature-branch Git workflow with `main` and `develop` as the two long-lived branches.
 
-## Workflow
+- `main`: Kept as the stable, deployable branch for the final submission.
+- `develop`: Used as the integration branch for completed features.
+- `feature/application`: Used for the frontend, backend, database, and Docker Compose implementation.
+- `feature/kubernetes`: Used for Kubernetes manifests and deployment automation.
+- `feature/git-workflow`: Used for Git workflow-related work.
+- `feature/documentation`: Used for the final documentation and evidence updates.
 
-1. Create feature branches from develop.
-2. Implement one logical assignment part per branch.
-3. Commit changes with descriptive messages.
-4. Open a Pull Request into develop.
-5. Review the diff and document review comments.
-6. Merge after testing.
-7. Promote validated releases to main through a PR.
+Feature branches were created from `develop`, and completed work was integrated through pull requests. The Kubernetes implementation was merged into `develop` through PR #5. The application implementation was developed incrementally on its feature branch.
 
-## Release Tags
+The final integration will be promoted from `develop` to `main` through a pull request after validation.
 
-- v1.0.0: Docker Compose deployment verified.
-- v1.1.0: Kubernetes deployment verified.
+## Commit and Review Practices
 
-## Suitability for a Team of Five
+I used separate commits for meaningful implementation steps instead of one large end-of-project commit. Commit messages describe the purpose of each change, such as adding an API, containerizing a service, or configuring Kubernetes resources.
 
-This model provides clear feature isolation and release control.
-However, for a five-person team shipping daily, I would prefer
-a simplified trunk-based development workflow with short-lived
-feature branches and automated CI checks. It reduces long-lived
-branch divergence and merge overhead.
+For pull requests, I review the changed files and add review comments to explain the changes and identify anything that needs attention before merging.
+
+## Would I Recommend This for a Team of Five?
+
+Yes. I would recommend this workflow for a team of five shipping daily.
+
+Each developer can work on an isolated feature branch, reducing conflicts and preventing incomplete changes from reaching the integration branch. Pull requests provide a review point before integration, while `develop` gives the team a shared place to test features together.
+
+For a team shipping daily, I would also require automated CI checks on pull requests, branch protection for `main`, and short-lived feature branches to avoid long-running integration conflicts.
