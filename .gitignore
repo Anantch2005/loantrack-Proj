@@ -34,6 +34,6 @@ data/
 # Logs
 *.log
 
-# Real Kubernetes secret 
+# Kubernetes secrets
 k8s/secret.yaml
 *.secret.yaml
