@@ -1,165 +1,118 @@
-# Issues
+# Issues faced
 
-This document records development and deployment issues encountered during the LoanTrack project, their impact, and the fixes or verification performed.
+Three problems found while building and testing LoanTrack. Each one lists the symptom, how I diagnosed it, the root cause and the fix.
 
-## 1. Line Ending Mismatch (CRLF vs LF)
+---
 
-**Problem:**
+## Issue 1: Backend could not reach the database when it started first (connection error)
 
-Windows uses CRLF (`\r\n`) line endings, while Linux and macOS use LF (`\n`). When files created on Windows are used inside Linux containers, carriage-return characters can cause compatibility problems.
+**Symptom**
 
-Potential symptoms include:
+When the backend container started before PostgreSQL, the log showed:
 
-- Shell scripts failing with `/bin/bash\r: bad interpreter: No such file or directory`.
-- Environment values containing unexpected trailing `\r` characters.
-- `grep`, `diff`, and `sed` commands failing to match expected patterns.
-- Configuration and deployment scripts behaving differently across environments.
-
-**Fix:**
-
-Add a `.gitattributes` file at the repository root:
-
-```gitattributes
-* text=auto eol=lf
-*.sh text eol=lf
+```text
+WARNING Database unavailable: [Errno -2] Name or service not known. Retrying in 2 seconds.
 ```
 
-This configures Git to normalize text files and enforce LF endings for shell scripts.
+Without retry handling the backend could not finish starting, and `/readyz` could not report a working database.
 
-After adding the file, normalize tracked files if required:
+**Diagnosis** (commands run, in order)
 
 ```bash
-git add --renormalize .
-git status
+docker compose stop frontend backend db
+docker compose up -d --no-deps backend      # start ONLY the backend
+docker compose logs backend                 # shows the "Name or service not known" errors
+docker compose ps                           # the db container does not exist yet
+docker compose up -d db
+docker compose logs backend                 # shows the pool was initialized after the db came up
 ```
 
-Commit the updated files after reviewing the changes.
+**Root cause**
 
-**Status:** Fix configured through Git attributes.
+With the `db` container absent, Docker's internal DNS cannot resolve the service name `db`, so every connection attempt fails with `Name or service not known`. This is a startup-ordering problem, not a wrong hostname.
+
+**Fix**
+
+- Backend: a background startup worker in `backend/app/database.py` retries the connection with exponential backoff (2, 4, 8, 16 seconds) and creates the connection pool as soon as the database answers. The API process stays alive, so `/healthz` keeps returning 200 while `/readyz` returns 503.
+- Compose: `depends_on: condition: service_healthy` plus a `pg_isready` healthcheck on the database.
+- Kubernetes: the backend `readinessProbe` uses `/readyz`, so a backend with no database is removed from the Service instead of being restarted.
+
+The recovery log is in `evidence/01-docker.md`.
 
 ---
 
-## 2. Backend Starts Before PostgreSQL Is Ready
+## Issue 2: The app URL stopped working after `minikube service ... --url` (Kubernetes access)
 
-**Problem:**
-
-The backend depends on PostgreSQL, but Docker containers can start before the database is ready to accept connections.
-
-During testing, the backend attempted to connect while the database service was unavailable. This initially caused DNS/connection errors such as:
+**Symptom**
 
 ```text
-Name or service not known
+$ minikube service frontend -n loantrack --url
+http://127.0.0.1:32841
+!  Because you are using a Docker driver on linux, the terminal needs to be open to run it.
 ```
 
-Without retry handling, a temporary database startup delay could prevent the backend from becoming operational.
+The command did not return, and the printed URL only worked while that terminal stayed open. The same URL did not work after closing it, and the port was different on every run.
 
-**Fix:**
+**Diagnosis** (commands run, in order)
 
-Implement connection retry logic with exponential backoff in the backend startup process.
-
-The retry sequence observed in the logs included:
-
-```text
-Retrying database connection in 2 seconds
-Retrying database connection in 4 seconds
-Retrying database connection in 8 seconds
-Retrying database connection in 16 seconds
+```bash
+kubectl get pod -n loantrack            # all pods 1/1 Running, so the app itself was fine
+kubectl get svc -n loantrack            # frontend NodePort 8080:30080/TCP
+minikube service frontend -n loantrack --url
 ```
 
-After PostgreSQL became available, the backend successfully initialized its connection pool:
+**Root cause**
 
-```text
-PostgreSQL connection pool initialized
-```
+With the Docker driver on WSL, the minikube node IP is not reachable from the host, so the NodePort (30080) cannot be opened directly. `minikube service` creates a temporary tunnel to a random local port, and the tunnel exists only while the command is running.
 
-**Verification:**
+**Fix**
 
-- Started the backend while PostgreSQL was unavailable.
-- Observed retry attempts and increasing delays.
-- Started the database service.
-- Confirmed successful connection-pool initialization.
+- Documented the exact command and the "keep this terminal open" rule in the README.
+- `scripts/deploy.sh` prints the command at the end instead of running it, so the deploy script finishes and does not hang.
+- For scripted checks, `scripts/collect-evidence-k8s.sh` uses `kubectl port-forward svc/frontend 18080:8080`, which does not depend on the minikube tunnel.
 
-**Status:** Retry and recovery behavior tested successfully.
+Screenshots: `screenshots/03-minikube-url.png`.
 
 ---
 
-## 3. Database Data Must Survive Container and Pod Restarts
+## Issue 3: The first deploy script was broken, and Windows line endings were in most files
 
-**Problem:**
+**Symptom**
 
-Containerized databases can lose data if their storage is tied only to a temporary container filesystem. Similarly, a Kubernetes database pod can be recreated with a fresh filesystem if persistent storage is not configured correctly.
+Reviewing `scripts/deploy-minikube.sh` from the Kubernetes branch:
 
-This is especially important for LoanTrack because loan records must remain available after service restarts and pod recovery.
+- `bash -n scripts/deploy-minikube.sh` reported a syntax error (exit status 2) because the last line, an `echo` with an opening quote, was cut off and never closed.
+- The file started with an empty line, so the `#!/usr/bin/env bash` shebang was on line 2, where the kernel ignores it.
+- `file` reported CRLF (Windows) line endings in 22 of the repository's text files.
 
-**Fix:**
+**Diagnosis** (commands run, in order)
 
-- Docker Compose: use a named volume for PostgreSQL data.
-- Kubernetes: use a PersistentVolumeClaim attached to the PostgreSQL StatefulSet.
-- Avoid deleting persistent volumes when restarting application services.
-
-**Verification:**
-
-Docker Compose:
-- Added a loan record through the application.
-- Restarted the Compose services.
-- Queried PostgreSQL again.
-- Confirmed that the record remained present.
-
-Kubernetes:
-- Confirmed the PostgreSQL PVC was `Bound`.
-- Deleted the PostgreSQL pod.
-- Waited for the StatefulSet to recreate it.
-- Queried the database again.
-- Confirmed that the existing records remained present.
-
-**Status:** Persistence tested in Docker Compose and Kubernetes.
-
-**Note:** Verify the loan amount in the Kubernetes test data before using the screenshot as final submission evidence.
-
----
-
-## 4. Liveness and Readiness Must Be Checked Separately
-
-**Problem:**
-
-A running backend process does not necessarily mean the application is ready to serve requests. The backend may still be running even when its database dependency is unavailable.
-
-Using only one health endpoint can incorrectly report an application as fully ready.
-
-**Fix:**
-
-Use separate endpoints:
-
-- `/api/healthz` checks whether the application process is alive.
-- `/api/readyz` checks whether the application can serve requests, including database connectivity.
-
-**Verification:**
-
-With PostgreSQL stopped, the observed responses were:
-
-```text
-/api/healthz
-HTTP 200
-{"status":"alive"}
+```bash
+bash -n scripts/deploy-minikube.sh            # syntax error, exit status 2
+head -c 20 scripts/deploy-minikube.sh | xxd   # first byte is 0a (a blank line), shebang comes after it
+tail -n 3 scripts/deploy-minikube.sh          # last line ends in the middle of a quoted string
+find . -type f -not -name '*.pyc' | xargs file | grep -c CRLF    # 22
 ```
 
-```text
-/api/readyz
-HTTP 503
-{"detail":"Database unavailable"}
-```
+**Root cause**
 
-After restarting PostgreSQL, readiness could be checked again.
+The script was edited and copied on Windows. The editor and Git kept CRLF line endings, a blank line was added at the top, and the last line was cut off when the text was pasted. CRLF also breaks shell scripts (`bad interpreter`) and puts a hidden `\r` at the end of values read from `.env`.
 
-**Status:** Liveness and readiness behavior tested.
+**Fix**
+
+- Replaced it with `scripts/deploy.sh`: shebang on line 1, complete last line, `bash -n` passes.
+- Added `.gitattributes` (`* text=auto eol=lf` and `*.sh text eol=lf`) and normalised the repository with `git add --renormalize .`. The same check now finds 0 CRLF files.
+- `deploy.sh` strips `\r` when it reads `.env`: `source <(tr -d '\r' < .env)`.
+- Added `make deploy` as a second entry point.
+
+Check: `bash -n scripts/deploy.sh` prints nothing and returns 0.
 
 ---
 
 ## Summary
 
-| Issue | Resolution |
-|---|---|
-| CRLF vs LF line endings | Configured Git attributes |
-| Backend starts before database | Retry with exponential backoff |
-| Database data loss risk | Named volume and Kubernetes PVC |
-| Incorrect health reporting | Separate liveness and readiness endpoints |
+| # | Problem | Root cause | Fix |
+|---|---|---|---|
+| 1 | Backend failed to connect when started before the DB | Docker DNS cannot resolve `db` while that container does not exist | Retry with exponential backoff, healthcheck with `service_healthy`, readiness probe on `/readyz` |
+| 2 | App URL only worked while a terminal stayed open | Docker driver on WSL needs a temporary minikube tunnel | Documented the command, script prints it, `kubectl port-forward` for scripted checks |
+| 3 | Truncated deploy script and CRLF line endings | Windows editing and copy-paste | New `deploy.sh`, `.gitattributes`, CR stripped from `.env` |
