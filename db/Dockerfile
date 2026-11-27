@@ -15,3 +15,6 @@ COPY --from=builder \
 COPY --from=builder \
     /build/seeds/002_seed_loans.sql \
     /docker-entrypoint-initdb.d/02-seed.sql
+
+# Run as the non-root postgres user (uid 70). Same uid as runAsUser in k8s/database.yaml.
+USER postgres
